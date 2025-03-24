@@ -1,397 +1,408 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Enhanced Drone & Bird Simulation with Radar & Logging</title>
-  <style>
-    body {
-      margin: 0;
-      background: #111;
-      color: #eee;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-    }
-    header {
-      text-align: center;
-      padding: 10px;
-      background: #333;
-      width: 100%;
-    }
-    .controls {
-      margin: 10px;
-      display: flex;
-      gap: 20px;
-      align-items: center;
-    }
-    button, select {
-      padding: 5px 10px;
-      background: #222;
-      border: 1px solid #444;
-      color: #eee;
-      cursor: pointer;
-    }
-    canvas {
-      border: 1px solid #444;
-      background: #222;
-      margin-top: 10px;
-    }
-    .legend {
-      margin-top: 10px;
-      display: flex;
-      gap: 15px;
-      flex-wrap: wrap;
-      justify-content: center;
-      font-size: 14px;
-    }
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .color-box {
-      width: 15px;
-      height: 15px;
-      border: 1px solid #fff;
-    }
-    #log {
-      width: 600px;
-      max-height: 150px;
-      overflow-y: auto;
-      background: #222;
-      border: 1px solid #444;
-      margin-top: 10px;
-      padding: 5px;
-      font-size: 13px;
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Enhanced Drone & Bird Behavior Simulation</h1>
-  </header>
-  <div class="controls">
-    <button id="toggleViewBtn">Switch to Lateral View</button>
-    <label for="objectSelect">Select Object: </label>
-    <select id="objectSelect">
-      <option value="normal">Normal Drone</option>
-      <option value="advanced">Advanced Drone</option>
-      <option value="bird">Bird</option>
-    </select>
-  </div>
-  <!-- Single canvas for toggling between views -->
-  <canvas id="simulationCanvas" width="600" height="600"></canvas>
-  <div class="legend">
-    <div class="legend-item"><div class="color-box" style="background:#FF0000;"></div> Device Center</div>
-    <div class="legend-item"><div class="color-box" style="background:#00FF00;"></div> Detection Radius</div>
-    <div class="legend-item"><div class="color-box" style="background:#FFFF00;"></div> Normal Drone</div>
-    <div class="legend-item"><div class="color-box" style="background:#00FFFF;"></div> Advanced Drone</div>
-    <div class="legend-item"><div class="color-box" style="background:#FFFFFF;"></div> Bird</div>
-    <div class="legend-item"><div class="color-box" style="background:#FF00FF;"></div> Advanced Drone Homing Path</div>
-  </div>
-  <div id="log"></div>
-
-  <script>
-    // Get elements
-    const canvas = document.getElementById('simulationCanvas');
-    const ctx = canvas.getContext('2d');
-    const toggleViewBtn = document.getElementById('toggleViewBtn');
-    const objectSelect = document.getElementById('objectSelect');
-    const logDiv = document.getElementById('log');
-
-    // Simulation settings
-    let viewMode = 'top'; // 'top' or 'lateral'
-
-    // Device parameters (scaled)
-    const device = {
-      x: canvas.width / 2,
-      y: canvas.height / 2,
-      detectionRadius: 150  // Increased for larger canvas
-    };
-
-    // Radar sweep parameters for top view (for rotating line)
-    let radarAngle = 0;
-
-    // Radar circles for cocentric radar stream (for both views)
-    let radarCircles = [];
-    const radarCircleInterval = 30; // frames between new circles
-    let radarFrameCount = 0;
-
-    // Logging mechanism
-    function logEvent(message) {
-      const time = new Date().toLocaleTimeString();
-      const logMessage = `[${time}] ${message}`;
-      const para = document.createElement('p');
-      para.textContent = logMessage;
-      logDiv.appendChild(para);
-      // Auto-scroll to latest log
-      logDiv.scrollTop = logDiv.scrollHeight;
-    }
-
-    // Object simulation: simulating one object at a time.
-    class SimObject {
-      constructor(x, y, vx, vy, type) {
-        this.x = x;
-        this.y = y;
-        this.vx = vx;
-        this.vy = vy;
-        this.type = type; // 'normal', 'advanced', 'bird'
-        this.altitude = (type === 'bird') ? 70 : 120; // arbitrary altitude value for larger canvas
-        this.landed = false;
-        this.returning = false;
-        this.startX = x;
-        this.startY = y;
-        // Flags to ensure events are logged only once.
-        this.hasLoggedDetection = false;
-        this.hasLoggedLanding = false;
-        this.hasLoggedHoming = false;
+  <head>
+    <meta charset="UTF-8" />
+    <title>Low Altitude Drone Detection Simulation</title>
+    <style>
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #111;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
       }
-      update() {
-        // Calculate distance from device center (using top view coordinates)
-        const dx = this.x - device.x;
-        const dy = this.y - device.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < device.detectionRadius) {
-          if (!this.hasLoggedDetection) {
-            logEvent(`${this.type.charAt(0).toUpperCase() + this.type.slice(1)} entered detection range.`);
-            this.hasLoggedDetection = true;
-          }
-          if (this.type === 'normal' && !this.landed) {
-            // Normal drone: lands and descends
-            this.vx = 0;
-            this.vy = 0;
-            if (this.altitude > 0) {
-              this.altitude -= 2;
-              if (this.altitude < 0) this.altitude = 0;
-            }
-            if (this.altitude === 0 && !this.hasLoggedLanding) {
-              logEvent(`Normal drone has landed.`);
-              this.hasLoggedLanding = true;
-            }
-            this.landed = (this.altitude === 0);
-          } else if (this.type === 'advanced' && !this.returning) {
-            // Advanced drone: initiate homing mechanism
-            this.returning = true;
-            const toOriginX = this.startX - this.x;
-            const toOriginY = this.startY - this.y;
-            const mag = Math.sqrt(toOriginX * toOriginX + toOriginY * toOriginY);
-            this.vx = (toOriginX / mag) * 2;
-            this.vy = (toOriginY / mag) * 2;
-            if (!this.hasLoggedHoming) {
-              logEvent(`Advanced drone initiating homing mechanism.`);
-              this.hasLoggedHoming = true;
-            }
-          }
-        }
-        if (!this.landed) {
-          this.x += this.vx;
-          this.y += this.vy;
+      header {
+        text-align: center;
+        padding: 10px;
+        background: #ccc;
+        width: 100%;
+      }
+      .controls {
+        margin: 10px;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+      }
+      button,
+      select {
+        padding: 5px 10px;
+        background: #eee;
+        border: 1px solid #aaa;
+        color: #111;
+        cursor: pointer;
+      }
+      canvas {
+        border: 1px solid #aaa;
+        background: #ffffff;
+        margin-top: 10px;
+      }
+      /* Logging remains for simulation events */
+      #log {
+        width: 800px;
+        max-height: 150px;
+        overflow-y: auto;
+        background: #eee;
+        border: 1px solid #aaa;
+        margin-top: 10px;
+        padding: 5px;
+        font-size: 13px;
+        color: #111;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Low Altitude Drone Detection Simulation</h1>
+    </header>
+    <div class="controls">
+      <button id="toggleViewBtn">Switch to Lateral View</button>
+      <label for="objectSelect">Select Object: </label>
+      <select id="objectSelect">
+        <option value="normal">Normal Drone</option>
+        <option value="advanced">Advanced Drone</option>
+        <option value="bird">Bird</option>
+      </select>
+    </div>
+    <canvas id="simulationCanvas" width="800" height="800"></canvas>
+    <h3>Simulation Logs: </h3>
+    <div id="log"></div>
+
+    <script>
+      // Get elements
+      const canvas = document.getElementById("simulationCanvas");
+      const ctx = canvas.getContext("2d");
+      const toggleViewBtn = document.getElementById("toggleViewBtn");
+      const objectSelect = document.getElementById("objectSelect");
+      const logDiv = document.getElementById("log");
+
+      // Simulation settings
+      let viewMode = "top"; // 'top' or 'lateral'
+
+      // Device parameters (scaled)
+      const device = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        detectionRadius: 300, // Increased for larger canvas
+      };
+
+      // Radar sweep parameters for top view
+      let radarAngle = 0;
+
+      // Radar circles for cocentric radar stream
+      let radarCircles = [];
+      const radarCircleInterval = 30; // frames between new circles
+      let radarFrameCount = 0;
+
+      // Offscreen canvases for static backgrounds
+      const topBgCanvas = document.createElement("canvas");
+      topBgCanvas.width = canvas.width;
+      topBgCanvas.height = canvas.height;
+      const topBgCtx = topBgCanvas.getContext("2d");
+
+      const lateralBgCanvas = document.createElement("canvas");
+      lateralBgCanvas.width = canvas.width;
+      lateralBgCanvas.height = canvas.height;
+      const lateralBgCtx = lateralBgCanvas.getContext("2d");
+
+      // Function to pre-render the top view background (green ground with gentle hills)
+      function renderTopBackground() {
+        // Green ground background
+        topBgCtx.fillStyle = "#a8d5a2"; // a soft green
+        topBgCtx.fillRect(0, 0, canvas.width, canvas.height);
+        topBgCtx.lineTo(canvas.width, canvas.height);
+        topBgCtx.lineTo(0, canvas.height);
+        topBgCtx.closePath();
+        topBgCtx.fill();
+      }
+
+      // Function to pre-render the lateral view background (white sky, soft ground, buildings)
+      function renderLateralBackground() {
+        // White sky
+        lateralBgCtx.fillStyle = "#ffffff";
+        lateralBgCtx.fillRect(0, 0, canvas.width, canvas.height);
+        const groundY = canvas.height - 80;
+        // Soft light grey ground
+        lateralBgCtx.fillStyle = "#e0e0e0";
+        lateralBgCtx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+        // Horizon line
+        lateralBgCtx.beginPath();
+        lateralBgCtx.moveTo(0, groundY);
+        lateralBgCtx.lineTo(canvas.width, groundY);
+        lateralBgCtx.strokeStyle = "#888";
+        lateralBgCtx.lineWidth = 3;
+        lateralBgCtx.stroke();
+        // Draw buildings (static, 5 buildings)
+        const buildingColors = ["#bbb", "#999", "#aaa"];
+        for (let i = 0; i < 5; i++) {
+          let bWidth = 50 + Math.random() * 50;
+          let bHeight = 80 + Math.random() * 120;
+          let bX = Math.random() * (canvas.width - bWidth);
+          lateralBgCtx.fillStyle = buildingColors[i % buildingColors.length];
+          lateralBgCtx.fillRect(bX, groundY - bHeight, bWidth, bHeight);
+          // Add a subtle left shadow
+          lateralBgCtx.fillStyle = "rgba(0,0,0,0.2)";
+          lateralBgCtx.fillRect(bX, groundY - bHeight, 10, bHeight);
         }
       }
-    }
 
-    // Current simulation object
-    let simObject;
-    // Function to initialize simulation object based on selection
-    function initSimObject() {
-      const type = objectSelect.value;
-      // Reset simulation parameters; choose start positions so that object will cross detection area.
-      if (type === 'normal') {
-        simObject = new SimObject(0, 100, 2, 1, 'normal');
-      } else if (type === 'advanced') {
-        simObject = new SimObject(600, 500, -2, -1, 'advanced');
-      } else { 
-        // Bird: starts from the left at y equal to the device center, so it crosses through the detection zone.
-        simObject = new SimObject(-50, device.y, 2, 0, 'bird');
+      // Render the static backgrounds once.
+      renderTopBackground();
+      renderLateralBackground();
+
+      // Load image masks for objects and device
+      const imageMasks = {
+        device: new Image(),
+        normal: new Image(),
+        advanced: new Image(),
+        bird: new Image(),
+      };
+      imageMasks.device.src = "/assets/device_mask.png";
+      imageMasks.normal.src = "/assets/normal_drone_mask.png";
+      imageMasks.advanced.src = "/assets/advanced_drone_mask.png";
+      imageMasks.bird.src = "/assets/bird_mask.png";
+
+      // Utility function to draw a masked image in a circular clipping region.
+      function drawMaskedObject(ctx, img, x, y, size, fallbackColor) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        if (img.complete) {
+          ctx.drawImage(img, x - size, y - size, size * 2, size * 2);
+        } else {
+          ctx.fillStyle = fallbackColor;
+          ctx.fillRect(x - size, y - size, size * 2, size * 2);
+        }
+        ctx.restore();
       }
-    }
-    initSimObject();
 
-    // Handle object type selection change
-    objectSelect.addEventListener('change', () => {
+      // Logging mechanism (only for simulation events)
+      function logEvent(message) {
+        const time = new Date().toLocaleTimeString();
+        const logMessage = `[${time}] ${message}`;
+        const para = document.createElement("p");
+        para.textContent = logMessage;
+        logDiv.appendChild(para);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+
+      // Object simulation: one object at a time.
+      class SimObject {
+        constructor(x, y, vx, vy, type) {
+          this.x = x;
+          this.y = y;
+          this.vx = vx;
+          this.vy = vy;
+          this.type = type; // 'normal', 'advanced', 'bird'
+          this.altitude = type === "bird" ? 90 : 150; // Increased altitude for larger scene
+          this.landed = false;
+          this.returning = false;
+          this.startX = x;
+          this.startY = y;
+          this.hasLoggedDetection = false;
+          this.hasLoggedLanding = false;
+          this.hasLoggedHoming = false;
+        }
+        update() {
+          const dx = this.x - device.x;
+          const dy = this.y - device.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < device.detectionRadius) {
+            if (!this.hasLoggedDetection) {
+              logEvent(
+                `${this.type.charAt(0).toUpperCase() + this.type.slice(1)} entered detection range.`
+              );
+              this.hasLoggedDetection = true;
+            }
+            if (this.type === "normal" && !this.landed) {
+              this.vx = 0;
+              this.vy = 0;
+              if (this.altitude > 0) {
+                this.altitude -= 2;
+                if (this.altitude < 0) this.altitude = 0;
+              }
+              if (this.altitude === 0 && !this.hasLoggedLanding) {
+                logEvent(`Normal drone has landed.`);
+                this.hasLoggedLanding = true;
+              }
+              this.landed = this.altitude === 0;
+            } else if (this.type === "advanced" && !this.returning) {
+              this.returning = true;
+              const toOriginX = this.startX - this.x;
+              const toOriginY = this.startY - this.y;
+              const mag = Math.sqrt(toOriginX * toOriginX + toOriginY * toOriginY);
+              this.vx = (toOriginX / mag) * 2;
+              this.vy = (toOriginY / mag) * 2;
+              if (!this.hasLoggedHoming) {
+                logEvent(`Advanced drone initiating homing mechanism.`);
+                this.hasLoggedHoming = true;
+              }
+            }
+          }
+          if (!this.landed) {
+            this.x += this.vx;
+            this.y += this.vy;
+          }
+        }
+      }
+
+      // Current simulation object
+      let simObject;
+      function initSimObject() {
+        const type = objectSelect.value;
+        if (type === "normal") {
+          simObject = new SimObject(0, 150, 3, 1.5, "normal");
+        } else if (type === "advanced") {
+          simObject = new SimObject(800, 650, -3, -1.5, "advanced");
+        } else {
+          // Bird: starts from left edge, crossing through device range horizontally.
+          simObject = new SimObject(-50, device.y, 3, 0, "bird");
+        }
+      }
       initSimObject();
-      logEvent(`Selected object: ${objectSelect.value}`);
-    });
 
-    // Toggle view function
-    toggleViewBtn.addEventListener('click', () => {
-      viewMode = (viewMode === 'top') ? 'lateral' : 'top';
-      toggleViewBtn.textContent = (viewMode === 'top') ? 'Switch to Lateral View' : 'Switch to Top View';
-      logEvent(`Switched to ${viewMode} view.`);
-    });
-
-    // Main simulation loop
-    function simulate() {
-      simObject.update();
-      radarAngle += 0.03;
-      updateRadarCircles();
-      radarFrameCount++;
-      if (radarFrameCount % radarCircleInterval === 0) {
-        // Create a new radar circle starting at radius 0 with full opacity.
-        radarCircles.push({ radius: 0, opacity: 1 });
-      }
-      drawView();
-      requestAnimationFrame(simulate);
-    }
-
-    // Update radar circles: expand them and fade them out.
-    function updateRadarCircles() {
-      for (let i = 0; i < radarCircles.length; i++) {
-        radarCircles[i].radius += 1.5;
-        radarCircles[i].opacity -= 0.005;
-      }
-      // Remove circles that have faded or expanded beyond a limit.
-      radarCircles = radarCircles.filter(c => c.radius < device.detectionRadius * 1.2 && c.opacity > 0);
-    }
-
-    // Draw current view based on viewMode
-    function drawView() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (viewMode === 'top') {
-        drawTopView();
-      } else {
-        drawLateralView();
-      }
-    }
-
-    // Draw a gradient background for the top view (terrain and sky)
-    function drawTopBackground() {
-      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      grad.addColorStop(0, "#0a0a0a");
-      grad.addColorStop(1, "#222");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      // Draw subtle terrain curves
-      ctx.fillStyle = "rgba(0, 100, 0, 0.2)";
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height * 0.6);
-      ctx.bezierCurveTo(canvas.width * 0.25, canvas.height * 0.5, canvas.width * 0.75, canvas.height * 0.7, canvas.width, canvas.height * 0.6);
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.lineTo(0, canvas.height);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // Top (plan) view drawing
-    function drawTopView() {
-      drawTopBackground();
-
-      // Draw detection circle
-      ctx.beginPath();
-      ctx.arc(device.x, device.y, device.detectionRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = '#00FF00';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Draw cocentric radar circles
-      radarCircles.forEach(circle => {
-        ctx.beginPath();
-        ctx.arc(device.x, device.y, circle.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(0,255,0,${circle.opacity})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
+      objectSelect.addEventListener("change", () => {
+        initSimObject();
       });
 
-      // Draw device center
-      ctx.beginPath();
-      ctx.arc(device.x, device.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#FF0000';
-      ctx.fill();
-
-      // Draw rotating radar sweep effect
-      ctx.save();
-      ctx.translate(device.x, device.y);
-      ctx.rotate(radarAngle);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(device.detectionRadius, 0);
-      ctx.strokeStyle = "rgba(0,255,0,0.3)";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.restore();
-
-      // Draw simulation object (enlarged: radius 15)
-      ctx.beginPath();
-      let color;
-      if (simObject.type === 'normal') color = '#FFFF00';
-      else if (simObject.type === 'advanced') color = '#00FFFF';
-      else color = '#FFFFFF';
-      ctx.arc(simObject.x, simObject.y, 15, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-
-      // Draw advanced drone homing path, if applicable
-      if (simObject.type === 'advanced' && simObject.returning) {
-        ctx.beginPath();
-        ctx.moveTo(simObject.x, simObject.y);
-        ctx.lineTo(simObject.startX, simObject.startY);
-        ctx.strokeStyle = '#FF00FF';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-    }
-
-    // Lateral (side) view drawing with enhanced scenery and radar stream
-    function drawLateralView() {
-      // Sky gradient background
-      const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      skyGrad.addColorStop(0, "#003366");
-      skyGrad.addColorStop(1, "#111");
-      ctx.fillStyle = skyGrad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw ground with texture-like shading
-      const groundY = canvas.height - 80;
-      const groundGrad = ctx.createLinearGradient(0, groundY, 0, canvas.height);
-      groundGrad.addColorStop(0, "#444");
-      groundGrad.addColorStop(1, "#222");
-      ctx.fillStyle = groundGrad;
-      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
-
-      // Draw horizon line
-      ctx.beginPath();
-      ctx.moveTo(0, groundY);
-      ctx.lineTo(canvas.width, groundY);
-      ctx.strokeStyle = '#888';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Draw cocentric radar circles at the device marker on ground
-      radarCircles.forEach(circle => {
-        ctx.beginPath();
-        ctx.arc(canvas.width/2, groundY, circle.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(0,255,0,${circle.opacity})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
+      toggleViewBtn.addEventListener("click", () => {
+        viewMode = viewMode === "top" ? "lateral" : "top";
+        toggleViewBtn.textContent =
+          viewMode === "top" ? "Switch to Lateral View" : "Switch to Top View";
       });
 
-      // Draw device marker on ground (centered horizontally)
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2, groundY, 6, 0, Math.PI * 2);
-      ctx.fillStyle = '#FF0000';
-      ctx.fill();
+      function simulate() {
+        simObject.update();
+        radarAngle += 0.03;
+        updateRadarCircles();
+        radarFrameCount++;
+        if (radarFrameCount % radarCircleInterval === 0) {
+          radarCircles.push({ radius: 0, opacity: 1 });
+        }
+        drawView();
+        requestAnimationFrame(simulate);
+      }
 
-      // Draw simulation object based on altitude (enlarged: radius 15)
-      let x = simObject.x; // horizontal position same as top view
-      let y = groundY - simObject.altitude; // vertical position based on altitude
-      ctx.beginPath();
-      let color;
-      if (simObject.type === 'normal') color = '#FFFF00';
-      else if (simObject.type === 'advanced') color = '#00FFFF';
-      else color = '#FFFFFF';
-      ctx.arc(x, y, 15, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      function updateRadarCircles() {
+        for (let i = 0; i < radarCircles.length; i++) {
+          radarCircles[i].radius += 2;
+          radarCircles[i].opacity -= 0.005;
+        }
+        radarCircles = radarCircles.filter(
+          (c) => c.radius < device.detectionRadius * 1.2 && c.opacity > 0
+        );
+      }
 
-      // Label the altitude for clarity
-      ctx.fillStyle = '#eee';
-      ctx.font = "14px sans-serif";
-      ctx.fillText(`Altitude: ${simObject.altitude}`, x + 18, y);
-    }
+      function drawView() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (viewMode === "top") {
+          drawTopView();
+        } else {
+          drawLateralView();
+        }
+      }
 
-    simulate();
-  </script>
-</body>
+      // Top view drawing: use pre-rendered topBgCanvas
+      function drawTopView() {
+        ctx.drawImage(topBgCanvas, 0, 0);
+        // Draw detection circle
+        ctx.beginPath();
+        ctx.arc(device.x, device.y, device.detectionRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = "#00FF00";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Draw dynamic radar circles
+        radarCircles.forEach((circle) => {
+          ctx.beginPath();
+          ctx.arc(device.x, device.y, circle.radius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(0,255,0,${circle.opacity})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
+
+        // Draw device using image mask (size 30)
+        drawMaskedObject(ctx, imageMasks.device, device.x, device.y, 20, "#FF0000");
+
+        // Draw rotating radar sweep
+        ctx.save();
+        ctx.translate(device.x, device.y);
+        ctx.rotate(radarAngle);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(device.detectionRadius, 0);
+        ctx.strokeStyle = "rgba(0,255,0,0.3)";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.restore();
+
+        // Draw simulation object with mask (size 20)
+        let maskImg, fallback;
+        if (simObject.type === "normal") {
+          maskImg = imageMasks.normal;
+          fallback = "#FFFF00";
+        } else if (simObject.type === "advanced") {
+          maskImg = imageMasks.advanced;
+          fallback = "#00FFFF";
+        } else {
+          maskImg = imageMasks.bird;
+          fallback = "#FFFFFF";
+        }
+        drawMaskedObject(ctx, maskImg, simObject.x, simObject.y, 30, fallback);
+
+        // Draw advanced drone homing path if applicable
+        if (simObject.type === "advanced" && simObject.returning) {
+          ctx.beginPath();
+          ctx.moveTo(simObject.x, simObject.y);
+          ctx.lineTo(simObject.startX, simObject.startY);
+          ctx.strokeStyle = "#FF00FF";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // Lateral view drawing: use pre-rendered lateralBgCanvas
+      function drawLateralView() {
+        ctx.drawImage(lateralBgCanvas, 0, 0);
+        const groundY = canvas.height - 80;
+        // Draw dynamic radar circles on ground
+        radarCircles.forEach((circle) => {
+          ctx.beginPath();
+          ctx.arc(canvas.width / 2, groundY, circle.radius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(0,255,0,${circle.opacity})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
+
+        // Draw device on ground with mask (size 30)
+        drawMaskedObject(ctx, imageMasks.device, canvas.width / 2, groundY, 25, "#FF0000");
+
+        // Draw simulation object using mask (size 20)
+        let maskImg, fallback;
+        if (simObject.type === "normal") {
+          maskImg = imageMasks.normal;
+          fallback = "#FFFF00";
+        } else if (simObject.type === "advanced") {
+          maskImg = imageMasks.advanced;
+          fallback = "#00FFFF";
+        } else {
+          maskImg = imageMasks.bird;
+          fallback = "#FFFFFF";
+        }
+        let x = simObject.x;
+        let y = groundY - simObject.altitude;
+        drawMaskedObject(ctx, maskImg, x, y, 30, fallback);
+
+        ctx.fillStyle = "#111";
+        ctx.font = "14px sans-serif";
+        ctx.fillText(`Altitude: ${simObject.altitude}`, x + 22, y);
+      }
+
+      simulate();
+    </script>
+  </body>
 </html>
